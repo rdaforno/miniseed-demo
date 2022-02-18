@@ -10,15 +10,14 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <math.h>
 
 /* Config */
 #define OUTPUT_FILE                 "sinewave.mseed"
-#define NUM_SAMPLES                 500
+#define NUM_SAMPLES                 498
 #define SAMPLE_SIZE                 4
-#define SAMPLE_RATE                 125
+#define SAMPLE_RATE                 100
 #define SEQUENCE_NUMBER             1
-#define USE_BIG_ENDIAN              1
+#define USE_BIG_ENDIAN              0
 
 /* MINISEED DEFINITIONS */
 
@@ -50,21 +49,20 @@
 #define MSEED_DATA_LITTLE_ENDIAN    0x0
 #define MSEED_DATA_BIG_ENDIAN       0x1
 
-
-#pragma pack(1)
+#pragma pack(1)     /* align the following structs to 1 byte */
 
 /* miniSEED v2.4 FSDH (Fixed Section of Data Header)
  * Note: SEED uses big endian word order as its standard, but libmseed can work with both
  *       (automatically determines endianness based on the 'year' field of the start time */
 typedef struct
 {
-  char     seq_no[6];
-  char     data_quality;
-  char     reserved;
-  char     station[5];
-  char     location[2];
-  char     channel[3];
-  char     network[2];
+  char       seq_no[6];
+  char       data_quality;
+  char       reserved;
+  char       station[5];
+  char       location[2];
+  char       channel[3];
+  char       network[2];
   /* record start time (10 bytes) */
   struct {
     uint16_t year;
@@ -75,16 +73,16 @@ typedef struct
     uint8_t  unused;
     uint16_t fract;
   } start_time;
-  uint16_t num_samples;
-  int16_t  samprate_fact;
-  int16_t  samprate_mult;
-  uint8_t  act_flags;
-  uint8_t  io_flags;
-  uint8_t  dq_flags;
-  uint8_t  num_blockettes;
-  int32_t  time_correct;
-  uint16_t data_ofs;
-  uint16_t blockette_ofs;
+  uint16_t   num_samples;
+  int16_t    samprate_fact;
+  int16_t    samprate_mult;
+  uint8_t    act_flags;
+  uint8_t    io_flags;
+  uint8_t    dq_flags;
+  uint8_t    num_blockettes;
+  int32_t    time_correct;
+  uint16_t   data_ofs;
+  uint16_t   blockette_ofs;
 } mseed2_fsdh_t;
 
 /* miniSEED v2.4 blockette 1000 */
@@ -96,33 +94,53 @@ typedef struct
   uint8_t  endian;
   uint8_t  data_len;
   uint8_t  reserved;
-} mseed2_b1k_t;
+} mseed2_bl1k_t;
 
 #pragma pack()
 
+#ifndef MIN
+#define MIN(a, b)   ((a) <= (b) ? (a) : (b))
+#endif
 
 uint8_t waveform_big[];
 uint8_t waveform_little[];
 
+/* Helper functions */
+uint32_t num_bits(uint32_t val)
+{
+  /* returns ceil(Log2(val)) */
+  uint32_t bits = 31;
+  while (bits > 0) {
+    if (val & (1 << bits)) {
+      if ((val & (val - 1)) != 0) {    /* if not a power of two, increase by one */
+        bits++;
+      }
+      break;
+    }
+    bits--;
+  }
+  return bits;
+}
 
+/* MAIN function */
 int main(void)
 {
-  char seqno_buf[7];
+  char buf[128];
 
-  if ( (sizeof(mseed2_fsdh_t) != MSEED_FSDH_LEN) || (sizeof(mseed2_b1k_t) != MSEED_BLOCKETTE_1000_LEN) ) {
+  if ( (sizeof(mseed2_fsdh_t) != MSEED_FSDH_LEN) || (sizeof(mseed2_bl1k_t) != MSEED_BLOCKETTE_1000_LEN) ) {
     printf("invalid struct size\r\n");
     return 1;
   }
 
   mseed2_fsdh_t header;
-  memset(&header, 0, sizeof(header));     /* make sure all unused fields are set to 0 */
-  snprintf(seqno_buf, 7, "%06u", SEQUENCE_NUMBER);
-  memcpy(header.seq_no,   seqno_buf, 6);  /* 6 chars, padded with zeros on the left */
+  memset(&header, 0, sizeof(mseed2_fsdh_t));        /* make sure all unused fields are set to 0 */
+  snprintf(buf, 7, "%06u", SEQUENCE_NUMBER);
+  memcpy(header.seq_no, buf, 6);                    /* 6 chars, padded with zeros on the left */
   header.data_quality     = 'R';
-  memcpy(header.station,  "DEV1 ", 5);    /* 5 chars, padded with white spaces at the end */
-  memcpy(header.location, "DG", 2);       /* 2 chars, padded with white spaces at the end */
-  memcpy(header.channel,  "Z  ", 3);      /* 3 chars, padded with white spaces at the end */
-  memcpy(header.network,  "  ", 2);       /* 2 chars, padded with white spaces at the end */
+  memcpy(header.station,  "DEV1 ", 5);              /* 5 chars, padded with white spaces at the end */
+  memcpy(header.location, "XY", 2);                 /* 2 chars, padded with white spaces at the end */
+  memcpy(header.channel,  "Z  ", 3);                /* 3 chars, padded with white spaces at the end */
+  memcpy(header.network,  "  ", 2);                 /* 2 chars, padded with white spaces at the end */
   header.start_time.year  = 2022;
   header.start_time.day   = 1;
   header.start_time.hour  = 12;
@@ -136,16 +154,17 @@ int main(void)
   header.io_flags         = 0;
   header.dq_flags         = 0;
   header.num_blockettes   = 1;
-  header.time_correct     = 0;            /* time correction to apply, in 100us steps */
-  header.data_ofs         = sizeof(header) + sizeof(mseed2_b1k_t);
-  header.blockette_ofs    = sizeof(header);
+  header.time_correct     = 0;                      /* time correction to apply, in 100us steps */
+  header.data_ofs         = sizeof(mseed2_fsdh_t) + sizeof(mseed2_bl1k_t);
+  header.blockette_ofs    = sizeof(mseed2_fsdh_t);
 
-  mseed2_b1k_t blockette1k;
-  blockette1k.type        = 1000;         /* blockette 1000 */
-  blockette1k.next        = 0;            /* no more blockettes follow */
+  mseed2_bl1k_t blockette1k;
+  blockette1k.type        = 1000;                   /* blockette 1000 */
+  blockette1k.next        = 0;                      /* no more blockettes follow */
   blockette1k.encoding    = MSEED_DATA_ENCODING_INT32;
   blockette1k.endian      = USE_BIG_ENDIAN ? MSEED_DATA_BIG_ENDIAN : MSEED_DATA_LITTLE_ENDIAN;
-  blockette1k.data_len    = (uint8_t)log2(NUM_SAMPLES * SAMPLE_SIZE * 2 - 1);    /* exponent (2^x) of data record length, min. value is 8 (256 bytes) */
+  uint32_t record_len     = sizeof(mseed2_fsdh_t) + sizeof(mseed2_bl1k_t) + NUM_SAMPLES * SAMPLE_SIZE;
+  blockette1k.data_len    = num_bits(record_len);   /* exponent (2^x) of data record length, min. value is 8 (256 bytes) */
   blockette1k.reserved    = 0;
 
   FILE* mseed_file = fopen(OUTPUT_FILE, "wb");
@@ -153,9 +172,19 @@ int main(void)
     printf("failed to open output file\r\n");
     return 1;
   }
-  fwrite(&header, sizeof(header), 1, mseed_file);
-  fwrite(&blockette1k, sizeof(mseed2_b1k_t), 1, mseed_file);
+  fwrite(&header, sizeof(mseed2_fsdh_t), 1, mseed_file);
+  fwrite(&blockette1k, sizeof(mseed2_bl1k_t), 1, mseed_file);
   fwrite((USE_BIG_ENDIAN ? waveform_big : waveform_little), NUM_SAMPLES, SAMPLE_SIZE, mseed_file);
+
+  /* add padding bytes to fill the remaining space in the data record to the next power of two */
+  uint32_t remaining_bytes = (1 << blockette1k.data_len) - record_len;
+  memset(buf, 0, 128);
+  while (remaining_bytes) {
+    uint32_t bytes_to_write = MIN(128, remaining_bytes);
+    fwrite(buf, bytes_to_write, 1, mseed_file);
+    remaining_bytes -= bytes_to_write;
+  }
+
   fclose(mseed_file);
 
   printf("data written to file '%s'\r\n", OUTPUT_FILE);
@@ -163,6 +192,7 @@ int main(void)
   return 0;
 }
 
+/* DATA */
 
 /* sine wave, 32-bit samples in big endian format */
 uint8_t waveform_big[] =
